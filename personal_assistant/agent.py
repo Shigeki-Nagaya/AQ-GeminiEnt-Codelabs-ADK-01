@@ -110,7 +110,15 @@ def _enqueue_task(payload: dict[str, Any]) -> None:
     except AlreadyExists:
         logger.info(json.dumps({"event": "task_duplicate_suppressed", "invocation_id": invocation_id}))
     except Exception as e:
-        logger.warning("Failed to enqueue task: %s", e)
+        import traceback
+        logger.warning(json.dumps({
+            "event": "enqueue_failed",
+            "error_type": type(e).__name__,
+            "error_str": str(e),
+            "error_details": getattr(e, "details", None),
+            "error_grpc_status": getattr(e, "grpc_status_code", None),
+            "traceback": traceback.format_exc()[-500:],
+        }, ensure_ascii=False))
 
 
 def before_agent_callback(callback_context: CallbackContext):
