@@ -39,6 +39,16 @@ Agent Engine のコンテナが使用する SA:
 - `gcp-sa-aiplatform-re` は Google 管理のサービスエージェントであり、
   通常の IAM バインディングが効かない可能性がある
 
+### ローカル（adk web）では成功した理由
+
+`adk web` では `gcloud auth application-default login` のユーザー認証
+（`s_nagaya@neural-group.com`）で動作する。
+このユーザーは `roles/owner` を持つため Cloud Tasks への書き込みが成功した。
+
+Agent Engine 上では `gcp-sa-aiplatform-re` SA で動作するため、
+ローカルでの成功は SA の権限とは無関係。
+「ローカルで動いた = SA に権限がある」ではないことに注意。
+
 ### 現在の実装
 
 Cloud Tasks を断念し、httpx で Cloud Run を直接呼ぶ方式に戻した。
