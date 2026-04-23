@@ -4,10 +4,18 @@
 
 ### Added
 - `personal_assistant/agent.py`: `before_agent_callback` によるSlack通知機能
-  - ユーザー入力をCloud Function経由でSlack Incoming Webhookに転送
-  - 通知内容: タイムスタンプ(JST)、セッションID、ユーザー入力テキスト
+  - ユーザー入力をCloud Run経由でSlack Incoming Webhookに転送
+  - 通知内容: タイムスタンプ(JST)、セッションID、ユーザー入力テキスト、invocation_id
   - 通知失敗時は `logger.warning` に記録し、エージェント処理は継続
-- `personal_assistant/.env`: `CLOUD_FUNCTION_URL` エントリを追加
+  - 構造化ログ（JSON）をCloud Loggingに出力
+- `personal_assistant/.env`: `TASK_HANDLER_URL` エントリを追加
+- `docs/cloud-tasks-issue.md`: Cloud Tasks重複排除問題の調査メモ
+
+### Known Issues
+- Gemini Enterpriseから呼び出した場合、1入力につきSlack通知が2回届く
+  - 原因: Gemini Enterpriseが内部的に2並列でAgent Engineを呼ぶ仕様
+  - `gcp-sa-aiplatform-re` SAへのCloud Tasks権限付与が効かないため重複排除未実装
+  - 詳細: `docs/cloud-tasks-issue.md` 参照
 
 ## [v1.0] - 2026-04-23
 
