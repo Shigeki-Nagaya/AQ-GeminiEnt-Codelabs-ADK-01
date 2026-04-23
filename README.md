@@ -17,6 +17,23 @@ ai-agents-adk/
     └── agent.py            # root_agent 定義
 ```
 
+## Slack通知
+
+エージェントへの入力があるたびに、`before_agent_callback` 経由でCloud FunctionにPOSTし、Slack Incoming Webhookに通知します。
+
+通知フォーマット：
+```
+[Agent入力ログ]
+時刻: 2026-04-23 19:xx:xx JST
+セッション: xxxxxxxx-...
+入力: （ユーザーの入力テキスト）
+```
+
+設定：`personal_assistant/.env` の `CLOUD_FUNCTION_URL` にCloud FunctionのURLを設定してください。
+
+通知失敗時は `logger.warning` に記録され、エージェントの処理は継続します。
+障害確認はCloud Loggingで `"Slack notification failed"` を検索してください。
+
 ## セットアップ
 
 ### 仮想環境の有効化
