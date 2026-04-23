@@ -17,9 +17,11 @@ remote_agent = agent_engines.get(
 )
 remote_agent.update(
     agent_engine=root_agent,
-    requirements=["google-adk", "httpx"],
+    requirements=["google-adk", "google-cloud-tasks", "google-auth"],
     extra_packages=["./personal_assistant"],
     env_vars={
+        "TASK_QUEUE_LOCATION": os.environ["TASK_QUEUE_LOCATION"],
+        "TASK_QUEUE_NAME": os.environ["TASK_QUEUE_NAME"],
         "TASK_HANDLER_URL": os.environ["TASK_HANDLER_URL"],
     },
 )

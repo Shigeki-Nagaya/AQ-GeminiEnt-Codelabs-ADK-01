@@ -9,11 +9,10 @@ from typing import Any
 
 from google.adk.agents.callback_context import CallbackContext
 from google.adk.agents.llm_agent import Agent
-import httpx
-
-# ------------------------------------------------------------
-# Logging
-# ------------------------------------------------------------
+from google.api_core.exceptions import AlreadyExists
+from google.cloud import tasks_v2
+import google.auth
+import google.auth.transport.requests
 
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 logging.basicConfig(level=LOG_LEVEL)
@@ -21,15 +20,20 @@ logger = logging.getLogger(__name__)
 
 JST = timezone(timedelta(hours=9))
 
-# ------------------------------------------------------------
-# Environment
-# ------------------------------------------------------------
-
+PROJECT_ID = os.getenv("GOOGLE_CLOUD_PROJECT", "")
+TASK_QUEUE_LOCATION = os.getenv("TASK_QUEUE_LOCATION", "")
+TASK_QUEUE_NAME = os.getenv("TASK_QUEUE_NAME", "")
 TASK_HANDLER_URL = os.getenv("TASK_HANDLER_URL", "")
 MAX_USER_INPUT_LOG_LENGTH = int(os.getenv("MAX_USER_INPUT_LOG_LENGTH", "200"))
 
-# invocation_idベースのメモリ内重複排除（同一プロセス内のみ有効）
-_notified: set[str] = set()
+_tasks_client: tasks_v2.CloudTasksClient | None = None
+
+
+def _get_tasks_client() -> tasks_v2.CloudTasksClient:
+    global _tasks_client
+    if _tasks_client is None:
+        _tasks_client = tasks_v2.CloudTasksClient()
+    return _tasks_client
 
 
 def _safe_get_user_input(callback_context: CallbackContext) -> str:
@@ -61,22 +65,59 @@ def _build_payload(callback_context: CallbackContext) -> dict[str, Any]:
     }
 
 
+def _enqueue_task(payload: dict[str, Any]) -> None:
+    if not all([PROJECT_ID, TASK_QUEUE_LOCATION, TASK_QUEUE_NAME, TASK_HANDLER_URL]):
+        logger.warning("Cloud Tasks env vars not fully set.")
+        return
+
+    invocation_id = str(payload.get("invocation_id") or "")
+    if not invocation_id:
+        return
+
+    # 実行中の認証情報を確認（デバッグ用）
+    try:
+        creds, project = google.auth.default()
+        auth_req = google.auth.transport.requests.Request()
+        creds.refresh(auth_req)
+        logger.info(json.dumps({
+            "event": "auth_debug",
+            "service_account_email": getattr(creds, "service_account_email", None),
+            "token_uri": getattr(creds, "token_uri", None),
+            "project": project,
+        }))
+    except Exception as e:
+        logger.warning("auth debug failed: %s", e)
+
+    client = _get_tasks_client()
+    parent = client.queue_path(PROJECT_ID, TASK_QUEUE_LOCATION, TASK_QUEUE_NAME)
+    digest = hashlib.sha256(invocation_id.encode()).hexdigest()[:32]
+    task_name = client.task_path(PROJECT_ID, TASK_QUEUE_LOCATION, TASK_QUEUE_NAME, f"agent-log-{digest}")
+
+    try:
+        response = client.create_task(
+            request={"parent": parent, "task": {
+                "name": task_name,
+                "http_request": {
+                    "http_method": tasks_v2.HttpMethod.POST,
+                    "url": TASK_HANDLER_URL,
+                    "headers": {"Content-Type": "application/json"},
+                    "body": json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+                },
+            }},
+            timeout=1.0,
+        )
+        logger.info(json.dumps({"event": "task_enqueued", "task_name": response.name}))
+    except AlreadyExists:
+        logger.info(json.dumps({"event": "task_duplicate_suppressed", "invocation_id": invocation_id}))
+    except Exception as e:
+        logger.warning("Failed to enqueue task: %s", e)
+
+
 def before_agent_callback(callback_context: CallbackContext):
     try:
         payload = _build_payload(callback_context)
         logger.info(json.dumps(payload, ensure_ascii=False))
-
-        if not TASK_HANDLER_URL:
-            return
-
-        invocation_id = str(payload.get("invocation_id") or "")
-        if invocation_id in _notified:
-            logger.info(json.dumps({"event": "duplicate_suppressed", "invocation_id": invocation_id}))
-            return
-        _notified.add(invocation_id)
-
-        httpx.post(TASK_HANDLER_URL, json=payload, timeout=3.0)
-
+        _enqueue_task(payload)
     except Exception as e:
         logger.warning("before_agent callback failed: %s", e)
 
