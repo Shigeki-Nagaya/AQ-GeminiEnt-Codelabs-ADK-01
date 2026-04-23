@@ -9,5 +9,8 @@ __pycache__/
 # Environment variables
 .env
 
+# ADK local session data
+.adk/
+
 # IDE
 .vscode/
