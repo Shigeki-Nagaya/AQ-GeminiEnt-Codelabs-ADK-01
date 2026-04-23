@@ -96,7 +96,7 @@ python deploy.py
 |------|-----|
 | Project | quality-assurance-486505 |
 | Location | asia-northeast1 |
-| Resource name | `projects/813649126279/locations/asia-northeast1/reasoningEngines/734816814982234112` |
+| Resource name | `projects/813649126279/locations/asia-northeast1/reasoningEngines/5346502833409622016` |
 
 別セッションからの利用：
 

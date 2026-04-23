@@ -10,7 +10,8 @@ vertexai.init(
 
 remote_agent = agent_engines.create(
     agent_engine=root_agent,
-    requirements=["google-adk"],
+    requirements=["google-adk", "httpx"],
+    extra_packages=["./personal_assistant"],
 )
 
 print(f"Agent Engine created: {remote_agent.resource_name}")
