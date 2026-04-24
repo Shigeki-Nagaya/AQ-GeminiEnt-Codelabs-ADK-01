@@ -4,15 +4,17 @@ import logging
 import os
 import socket
 import threading
+import urllib.parse
+import urllib.request as urlreq
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+import google.auth
+import google.auth.transport.requests
 from google.adk.agents.callback_context import CallbackContext
 from google.adk.agents.llm_agent import Agent
 from google.api_core.exceptions import AlreadyExists
 from google.cloud import tasks_v2
-import google.auth
-import google.auth.transport.requests
 
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 logging.basicConfig(level=LOG_LEVEL)
@@ -26,14 +28,51 @@ TASK_QUEUE_NAME = os.getenv("TASK_QUEUE_NAME", "")
 TASK_HANDLER_URL = os.getenv("TASK_HANDLER_URL", "")
 MAX_USER_INPUT_LOG_LENGTH = int(os.getenv("MAX_USER_INPUT_LOG_LENGTH", "200"))
 
-_tasks_client: tasks_v2.CloudTasksClient | None = None
 
+def _debug_adc_principal():
+    """ADCのprincipalをtokeninfoで確認してログに出す。credentialsを返す。"""
+    try:
+        creds, project_id = google.auth.default(
+            scopes=["https://www.googleapis.com/auth/cloud-platform"]
+        )
+        logger.warning("ADC_DEBUG base: %s", json.dumps({
+            "project_id": project_id,
+            "cred_class": type(creds).__name__,
+            "service_account_email_attr": getattr(creds, "service_account_email", None),
+            "GOOGLE_APPLICATION_CREDENTIALS": os.getenv("GOOGLE_APPLICATION_CREDENTIALS"),
+        }, ensure_ascii=False))
 
-def _get_tasks_client() -> tasks_v2.CloudTasksClient:
-    global _tasks_client
-    if _tasks_client is None:
-        _tasks_client = tasks_v2.CloudTasksClient()
-    return _tasks_client
+        metadata_email = None
+        try:
+            req = urlreq.Request(
+                "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/email",
+                headers={"Metadata-Flavor": "Google"}
+            )
+            with urlreq.urlopen(req, timeout=2) as r:
+                metadata_email = r.read().decode().strip()
+        except Exception as e:
+            logger.warning("ADC_DEBUG metadata email failed: %r", e)
+
+        creds.refresh(google.auth.transport.requests.Request())
+
+        tokeninfo = {}
+        try:
+            qs = urllib.parse.urlencode({"access_token": creds.token})
+            with urlreq.urlopen(f"https://oauth2.googleapis.com/tokeninfo?{qs}", timeout=5) as r:
+                tokeninfo = json.loads(r.read().decode())
+        except Exception as e:
+            logger.warning("ADC_DEBUG tokeninfo failed: %r", e)
+
+        logger.warning("ADC_DEBUG tokeninfo: %s", json.dumps({
+            "email": tokeninfo.get("email"),
+            "sub": tokeninfo.get("sub"),
+            "metadata_default_email": metadata_email,
+        }, ensure_ascii=False))
+
+        return creds
+    except Exception:
+        logger.exception("ADC_DEBUG failed")
+        return None
 
 
 def _safe_get_user_input(callback_context: CallbackContext) -> str:
@@ -74,21 +113,10 @@ def _enqueue_task(payload: dict[str, Any]) -> None:
     if not invocation_id:
         return
 
-    # 実行中の認証情報を確認（デバッグ用）
-    try:
-        creds, project = google.auth.default()
-        auth_req = google.auth.transport.requests.Request()
-        creds.refresh(auth_req)
-        logger.info(json.dumps({
-            "event": "auth_debug",
-            "service_account_email": getattr(creds, "service_account_email", None),
-            "token_uri": getattr(creds, "token_uri", None),
-            "project": project,
-        }))
-    except Exception as e:
-        logger.warning("auth debug failed: %s", e)
+    creds = _debug_adc_principal()
 
-    client = _get_tasks_client()
+    # credentialsを明示してCloudTasksClientを作成
+    client = tasks_v2.CloudTasksClient(credentials=creds) if creds else tasks_v2.CloudTasksClient()
     parent = client.queue_path(PROJECT_ID, TASK_QUEUE_LOCATION, TASK_QUEUE_NAME)
     digest = hashlib.sha256(invocation_id.encode()).hexdigest()[:32]
     task_name = client.task_path(PROJECT_ID, TASK_QUEUE_LOCATION, TASK_QUEUE_NAME, f"agent-log-{digest}")
@@ -111,14 +139,7 @@ def _enqueue_task(payload: dict[str, Any]) -> None:
         logger.info(json.dumps({"event": "task_duplicate_suppressed", "invocation_id": invocation_id}))
     except Exception as e:
         import traceback
-        logger.warning(json.dumps({
-            "event": "enqueue_failed",
-            "error_type": type(e).__name__,
-            "error_str": str(e),
-            "error_details": getattr(e, "details", None),
-            "error_grpc_status": getattr(e, "grpc_status_code", None),
-            "traceback": traceback.format_exc()[-500:],
-        }, ensure_ascii=False))
+        logger.warning("enqueue_failed: %s | %s", type(e).__name__, traceback.format_exc()[-300:])
 
 
 def before_agent_callback(callback_context: CallbackContext):

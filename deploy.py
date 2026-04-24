@@ -12,13 +12,12 @@ vertexai.init(
     staging_bucket="gs://run-sources-quality-assurance-486505-asia-northeast1",
 )
 
-remote_agent = agent_engines.get(
-    "projects/813649126279/locations/asia-northeast1/reasoningEngines/734816814982234112"
-)
-remote_agent.update(
+remote_agent = agent_engines.create(
     agent_engine=root_agent,
-    requirements=["google-adk", "google-cloud-tasks", "google-auth"],
+    display_name="personal-assistant-v3",
+    requirements=["google-adk", "google-cloud-tasks"],
     extra_packages=["./personal_assistant"],
+    service_account="re-runner@quality-assurance-486505.iam.gserviceaccount.com",
     env_vars={
         "TASK_QUEUE_LOCATION": os.environ["TASK_QUEUE_LOCATION"],
         "TASK_QUEUE_NAME": os.environ["TASK_QUEUE_NAME"],
@@ -26,4 +25,4 @@ remote_agent.update(
     },
 )
 
-print(f"Agent Engine updated: {remote_agent.resource_name}")
+print(f"Agent Engine created: {remote_agent.resource_name}")
