@@ -13,12 +13,13 @@ vertexai.init(
 )
 
 remote_agent = agent_engines.get(
-    "projects/813649126279/locations/asia-northeast1/reasoningEngines/734816814982234112"
+    "projects/813649126279/locations/asia-northeast1/reasoningEngines/6323221002595598336"
 )
 remote_agent.update(
     agent_engine=root_agent,
     requirements=["google-adk", "httpx"],
     extra_packages=["./personal_assistant"],
+    service_account="re-runner@quality-assurance-486505.iam.gserviceaccount.com",
     env_vars={
         "TASK_HANDLER_URL": os.environ["TASK_HANDLER_URL"],
     },
