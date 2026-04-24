@@ -56,7 +56,47 @@ Cloud Tasks を断念し、httpx で Cloud Run を直接呼ぶ方式に戻した
 
 ---
 
-## 次にやるべきこと
+## 最終結論（2026-04-24）
+
+### 根本原因
+
+`roles/aiplatform.reasoningEngineServiceAgent` ロールに `cloudtasks.*` 権限が含まれていない。
+
+```bash
+$ gcloud iam roles describe roles/aiplatform.reasoningEngineServiceAgent \
+    --format="value(includedPermissions)" | tr ';' '\n' | grep task
+# → 何も出ない（Cloud Tasks権限なし）
+```
+
+このロールはGoogleが管理しており、ユーザーが変更できない。
+
+### 試みた対策と結果
+
+| 対策 | 結果 |
+|------|------|
+| `gcp-sa-aiplatform-re` にプロジェクトレベル `roles/cloudtasks.enqueuer` | 403継続 |
+| `gcp-sa-aiplatform-re` にキューレベル `roles/cloudtasks.enqueuer` | 403継続 |
+| `gcp-sa-aiplatform-re` に `roles/cloudtasks.admin` | 403継続 |
+| `re-runner` カスタムSAを作成し `service_account` パラメータで指定 | SDKに反映されず、`gcp-sa-aiplatform-re` のまま |
+| `create()` で `service_account` 指定 | 同上、反映されず |
+
+### ADCデバッグで判明した事実
+
+- Agent Engine上の `google.auth.default()` は `cred_class: "Credentials"`（Compute Engine Credentials）
+- `metadata_default_email` は常に `gcp-sa-aiplatform-re`（`service_account` 指定に関わらず）
+- `tokeninfo.email` は null（Compute Engineトークンはtokeninfo APIで email が返らない）
+- `GOOGLE_APPLICATION_CREDENTIALS` は null（環境変数による上書きなし）
+
+### 現在の実装
+
+Cloud Tasksを断念し、httpxでCloud Runを直接呼ぶ方式を採用（`main` ブランチ）。
+重複排除なし（Gemini Enterpriseが2並列でAgent Engineを呼ぶため2回通知が来る）。
+
+### 将来の対策候補
+
+1. **Pub/Sub** — `roles/aiplatform.reasoningEngineServiceAgent` に `pubsub.topics.publish` が含まれているか確認する
+2. **Googleサポートへの問い合わせ** — `service_account` パラメータが反映されない件と、Cloud Tasks権限の付与方法を確認する
+3. **Cloud Loggingアラート** — 構造化ログからSlack通知チャンネルへ（重複は頻度制御で対処）
 
 ### 調査方針A: gcp-sa-aiplatform-re への権限付与方法を調べる
 
